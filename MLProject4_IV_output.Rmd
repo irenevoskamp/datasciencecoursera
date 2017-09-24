@@ -1,0 +1,155 @@
+---
+title: "ML_Week4_CourseProject_IV"
+output:
+  word_document: default
+  html_document: default
+---
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+##Data
+
+The training data for this project are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+##Deliverable 
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+
+Load libraries
+```{r }
+library("caret")
+```
+Download the data
+```{r }
+if(!file.exists("pml-training.csv")){download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training.csv")}
+
+if(!file.exists("pml-testing.csv")){download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-testing.csv")}
+```
+
+Examination of the data uncovered a lot of missing values. To make this analyzable, we need to resolve those. Read the training data and replace empty values by NA
+```{r}
+trainingDataSet<- read.csv("pml-training.csv", sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+testingDataSet<- read.csv("pml-testing.csv", sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+dim(trainingDataSet)
+```
+
+```{r}
+dim(testingDataSet)
+```
+
+Our data consists of 19622 values of 160 variables.
+
+##Clean the data
+To improve the cleanliness of the data, we want to remove columns with missing value.
+```{r}
+trainingDataSet <- trainingDataSet[,(colSums(is.na(trainingDataSet)) == 0)]
+dim(trainingDataSet)
+```
+```{r}
+testingDataSet <- testingDataSet[,(colSums(is.na(testingDataSet)) == 0)]
+dim(testingDataSet)
+```
+
+
+We reduced our data to 60 variables.
+
+##Preprocess the data
+
+```{r} 
+numericalsIdx <- which(lapply(trainingDataSet, class) %in% "numeric")
+
+preprocessModel <-preProcess(trainingDataSet[,numericalsIdx],method=c('knnImpute', 'center', 'scale'))
+pre_trainingDataSet <- predict(preprocessModel, trainingDataSet[,numericalsIdx])
+pre_trainingDataSet$classe <- trainingDataSet$classe
+
+pre_testingDataSet <-predict(preprocessModel,testingDataSet[,numericalsIdx])
+```
+##Removing the non zero variables
+Since variables that are near zero have minimal predictive value, we remove them to simplify the modeling. 
+
+```{r}
+nzv <- nearZeroVar(pre_trainingDataSet,saveMetrics=TRUE)
+pre_trainingDataSet <- pre_trainingDataSet[,nzv$nzv==FALSE]
+
+nzv <- nearZeroVar(pre_testingDataSet,saveMetrics=TRUE)
+pre_testingDataSet <- pre_testingDataSet[,nzv$nzv==FALSE]
+```
+#Validation set
+We will use a 75% observation training dataset to train our model. We will then validate it on the last 25%.
+
+```{r}
+set.seed(12031987)
+idxTrain<- createDataPartition(pre_trainingDataSet$classe, p=3/4, list=FALSE)
+training<- pre_trainingDataSet[idxTrain, ]
+validation <- pre_trainingDataSet[-idxTrain, ]
+dim(training) ; dim(validation)
+```
+
+##Train Model
+We will train a random forest model,with a cross validation of 5 folds to avoid overfitting.
+
+```{r}
+library(randomForest)
+```
+
+```{r}
+modFitrf <- train(classe ~., method="rf", data=training, trControl=trainControl(method='cv'), number=5, allowParallel=TRUE, importance=TRUE )
+```
+
+```{r}
+modFitrf
+```
+
+##Interpretation of model results. 
+We create a plot so we can assess the importance of each variable to the prediciton. 
+```{r varImpPlot}
+ varImpPlot(modFitrf$finalModel, sort = TRUE, type = 1, pch = 19, col = 1, cex = 0.6, main = "Importance of the Individual Principal Components")
+```
+This plot shows each of the principal components in order from most important to least important.
+
+
+##Cross Validation Testing and Out-of-Sample Error Estimate
+To evaluate the accuracy of the model we built from training, we must now apply it to the test data. 
+
+#Accuracy and Estimated out of sample error
+```{r}
+predValidRF <- predict(modFitrf, validation)
+
+confus <- confusionMatrix(predValidRF, validation$classe)
+confus
+```
+There are really quite few variables that have major impact in this model.
+```{r}
+accur <- postResample(validation$classe, predValidRF)
+modAccuracy <- accur[[1]]
+modAccuracy
+```
+
+How good is our out-of-sample error? 
+```{r}
+out_of_sample_error <- 1 - modAccuracy
+out_of_sample_error
+```
+
+#The estimated accuracy of the model is 99.7% and the estimated out-of-sample error based on our fitted model applied to the cross validation dataset is 0.3%.
+----------------
+  
+##Application of this model on the 20 test cases provided
+We already cleaned the test data base (teData) so we don't need to do that again. For this testing, we must delete the “problem id” column to prevent it from introducing noise into the analysis.
+
+``` {r}
+pred_final <- predict(modFitrf, pre_testingDataSet)
+pred_final
+```
+
